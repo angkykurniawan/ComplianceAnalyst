@@ -1,0 +1,33 @@
+================================================================================
+DOKUMEN SOP & TROUBLESHOOTING INFRASTRUKTUR SERVER INTERNAL
+Versi: 2.4 | Klasifikasi: Internal IT Operations
+================================================================================
+
+1. KODE ERROR: ERR-PROX-01 (Proxmox VE Cluster Quorum Loss)
+- Deskripsi: Cluster Proxmox mengalami kehilangan kuorum (Quorum Lost) akibat salah satu node utama mati mendadak, menyebabkan VM terkunci (read-only) atau tidak bisa melakukan migrasi.
+- Gejala: Muncul pesan error "Waiting for quorum..." pada task log GUI Proxmox, cluster status menjadi offline/red.
+- Langkah Pemecahan Masalah (Troubleshooting Steps):
+  1. Jangan terburu-buru mereset seluruh node fisik. Periksa status koros dengan perintah CLI: `pvecm status`.
+  2. Jika node yang mati tidak dapat dihidupkan dalam waktu dekat dan kuorum hilang (tersisa kurang dari 50% node), paksa override kuorum sementara dengan perintah: `pvecm expected 1`.
+  3. Setelah kuorum pulih, segera nyalakan kembali node yang mati atau lakukan fencing pada node yang rusak.
+- Peringatan K3 / Keamanan: Pastikan tidak ada migrasi VM aktif yang sedang berjalan saat override kuorum dilakukan untuk mencegah korupsi data disk qcow2.
+
+2. KODE ERROR: ERR-LVS-02 (Keepalived VRRP Heartbeat Failure & Split-Brain)
+- Deskripsi: Terjadi kegagalan komunikasi VRRP antara Load Balancer Primary dan Backup, menyebabkan kedua server mengklaim Virtual IP (VIP) yang sama (Split-Brain).
+- Gejala: IP konflik di jaringan lokal, trafik packet drop melonjak drastis, service ipvsadm tidak sinkron.
+- Langkah Pemecahan Masalah (Troubleshooting Steps):
+  1. Periksa log sistem menggunakan perintah: `journalctl -u keepalived -e`.
+  2. Periksa status interface jaringan dan pastikan kabel fisik/vSwitch pada jalur heartbeat (interface khusus VRRP) terhubung normal.
+  3. Periksa konfigurasi /etc/keepalived/keepalived.conf, pastikan `vrrp_instance` memiliki `priority` yang berbeda jelas (misal Master = 101, Backup = 100) dan `auth_pass` valid.
+  4. Restart layanan di node yang bermasalah: `systemctl restart keepalived`.
+- Peringatan K3 / Keamanan: Lakukan uji coba failover di jam operasional rendah (maintenance window) untuk menghindari downtime layanan publik.
+
+3. KODE ERROR: ERR-DB-03 (Laravel Database Connection Timeout / Too Many Connections)
+- Deskripsi: Aplikasi web berbasis Laravel gagal terhubung ke database server atau mengalami penolakan koneksi akibat lonjakan trafik (stress test/traffic spike).
+- Gejala: Log Laravel (`storage/logs/laravel.log`) menampilkan pesan `PDOException: SQLSTATE[HY000] [1040] Too many connections` atau *Connection refused*.
+- Langkah Pemecahan Masalah (Troubleshooting Steps):
+  1. Cek jumlah koneksi aktif pada database dengan query SQL: `SHOW PROCESSLIST;`.
+  2. Evaluasi konfigurasi `max_connections` di file `postgresql.conf` atau `my.cnf`.
+  3. Optimalkan query yang lambat (long-running queries) dan pastikan mekanisme connection pooling atau database persistent aktif di file `.env` Laravel (`DB_PERSISTENT=true` jika didukung driver).
+  4. Restart layanan web server jika terjadi queue request yang menggantung: `systemctl restart php8.2-fpm` (sesuaikan versi PHP).
+- Peringatan K3 / Keamanan: Jangan langsung menaikkan `max_connections` tanpa menghitung kapasitas RAM server, karena dapat memicu Out-Of-Memory (OOM Killer) pada sistem operasi.
